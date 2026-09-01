@@ -1,0 +1,31 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "TokenOps",
+  "colors": {
+    "primary": "#3fb950",
+    "light": "#58a6ff",
+    "dark": "#0b0f14"
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get Started",
+        "pages": ["index", "cost-and-latency", "setup-and-testing"]
+      },
+      {
+        "group": "How It Works",
+        "pages": ["architecture", "token-optimization", "dlp", "routing-and-attribution"]
+      },
+      {
+        "group": "Status & Operations",
+        "pages": ["current-status", "benchmarks", "deployment"]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/ActtridentDev/tokenops"
+    }
+  }
+}

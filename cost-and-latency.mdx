@@ -1,0 +1,36 @@
+---
+title: "Cost & Latency Impact"
+description: "Real, measured numbers — not vendor claims"
+---
+
+Every number on this page was measured against a real API, not estimated or averaged for
+effect. Full sourcing and methodology in [Benchmarks](/benchmarks).
+
+| | Cost | Latency |
+|---|---|---|
+| **Prompt condensation** (real Gemini call, 19,252 → 7,999 chars) | **51.9% cheaper** ($0.001050 → $0.000505) | **832ms faster** (2253ms → 1364ms) |
+| **Compression proxy, warm, new session** | **13.4x cheaper** than going direct once the proxy has been warmed by any prior traffic | — |
+| **Compression proxy, cold, single call** | can be *more* expensive in the default cache-preserving mode (real, disclosed tradeoff) | slower in every mode tested so far |
+| **LLMLingua-2 (experimental)** | 44.8% reduction on one real message (324 → 179 chars) | — |
+| **DLP screening, per request (warm)** | $0 (self-hosted, no external API call) | **~50ms** added (gating check) + **~0ms** (PII check, overlaps the real provider call) |
+| **DLP screening, first request in a process** | $0 | **~2.5s** one-time model load, not repeated per request |
+
+<Warning>
+  **The one honest caveat worth reading before quoting either number:** compression's savings
+  depend on traffic shape. A single cold, one-shot call can come out *more* expensive than
+  calling the provider directly, because compression changes the prompt just enough to miss
+  the provider's own cache. The 13.4x number is the real *repeat-usage* story — once a proxy is
+  warm, new sessions benefit; a proxy that gets restarted per session pays the cold cost every
+  time. See [Token Optimization](/token-optimization) for the full mechanism and both sides of
+  that tradeoff.
+</Warning>
+
+## Why this matters for the pitch
+
+TokenOps is sold on verifiability, not on being the cheapest possible gateway — but "it costs
+more to prove what happened" would be a hard sell on its own. These numbers show the opposite:
+the compliance layer (DLP, signed receipts) adds real but small overhead (~50ms, $0 marginal
+cost), while the optimization layer (condensation, compression) can pay for that overhead many
+times over — *if* the proxy is run the way it's designed to be run: left running, not restarted
+per session. See [Deployment](/deployment) for why that matters for how this actually gets
+hosted.

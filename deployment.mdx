@@ -1,0 +1,98 @@
+---
+title: "Deployment"
+description: "How this goes from local-only to something a company can adopt"
+---
+
+Everything documented so far runs locally, one machine at a time. Getting either vertical into
+a company's hands without asking them to install or run anything themselves means hosting the
+same pipeline centrally — and the two verticals need genuinely different trust models to do
+that, not one unified approach.
+
+## Vertical 1 (Local Proxy) — hosted, but zero credential custody
+
+The mechanism doesn't change, only where it runs. Claude Code, Codex, and Cursor already send
+the caller's own provider API key on every request, in a header, regardless of what base URL is
+configured — they don't know or care that it points at TokenOps instead of the provider
+directly. So the exact relay behavior the local proxy already does today
+(`AnthropicTokenOpsAdapter` overriding only `baseUrl`) works identically once that address is
+public and authenticated instead of `127.0.0.1`:
+
+<Steps>
+  <Step title="One env var">
+    The customer sets `ANTHROPIC_BASE_URL=https://gw.tokenops.ai/t/<tenant-token>`. The tenant
+    token is the one genuinely new piece hosting adds: it's how TokenOps knows which company's
+    policy/budget/DLP config applies.
+  </Step>
+  <Step title="Their own key flows through unchanged">
+    Every request still carries the customer's own real provider key, exactly as it always did.
+  </Step>
+  <Step title="Checks run, then relay -- never store">
+    TokenOps runs DLP + compression + policy against the request, then forwards it upstream
+    **reusing the same key it just received** — never writing it to a database, a config file,
+    or a log line. It exists only in memory for the duration of that one request.
+  </Step>
+  <Step title="Provider bills the customer directly">
+    Same as if they'd called it themselves.
+  </Step>
+</Steps>
+
+<Note>
+  This is a deliberate choice, not a limitation to work around later: Vertical 1 has exactly one
+  provider/model per customer, so there's no routing decision for TokenOps to make on their
+  behalf — meaning there's nothing custody of the key would actually buy. Staying
+  credential-free also means a breach of TokenOps' own infrastructure exposes zero Vertical 1
+  customers' provider keys, and onboarding stays a single line.
+</Note>
+
+## Vertical 2 (Router) — hosted, virtual-key model
+
+Routing is a server-side decision — TokenOps has to pick which provider/model to call for each
+request, which means it has to be the one holding a usable key for that call. So this
+vertical's onboarding is a real two-step handoff, not a URL-only swap:
+
+<Steps>
+  <Step title="Once, at setup">
+    The customer gives TokenOps their real provider key(s) — for whichever providers they want
+    routing to consider. Stored server-side, encrypted at rest.
+  </Step>
+  <Step title="TokenOps issues a virtual key">
+    This already exists as a concept (`packages/web`'s admin UI, virtual-key/budget/policy
+    screens); it just needs a new place to be consumed from.
+  </Step>
+  <Step title="Two lines, no install">
+    ```
+    OPENAI_BASE_URL=https://gw.tokenops.ai/v1
+    OPENAI_API_KEY=<the virtual key TokenOps issued them>
+    ```
+  </Step>
+  <Step title="Per request">
+    TokenOps authenticates the virtual key (never a real provider key), resolves policy/budget,
+    runs DLP, picks the cheapest candidate model that clears the tier, and calls the real
+    provider using **our stored key** for that tenant.
+  </Step>
+</Steps>
+
+## The honest tradeoff
+
+Vertical 2's stored-key model is a materially bigger security surface than Vertical 1's relay —
+a breach there exposes every customer who's handed over provider keys, which Vertical 1's
+model structurally can't. That's an accepted cost specific to what routing requires, not
+something to unify away: forcing Vertical 1 into the same custody model would trade its main
+advantage — instant, zero-trust-required adoption — for architectural symmetry it doesn't
+actually need.
+
+## What's new to build for either of these to actually ship
+
+- A per-tenant identity layer in front of the existing pipeline — a URL-embedded token for
+  Vertical 1, a virtual-key lookup for Vertical 2. Both resolve to the same `api_keys`-style
+  identity the pipeline already expects; `runMinimumPipeline` itself doesn't need to change.
+- A `provider_credentials` table (tenant → provider → encrypted key) for Vertical 2 only.
+- A screen in the admin UI where a Vertical 2 customer pastes in their own provider keys, and a
+  flow that issues the corresponding virtual key.
+- Real encryption at rest for stored keys (KMS-backed, not a plaintext column), access logging,
+  and a hard rule that a decrypted key only ever exists in memory for the duration of one
+  outbound call — never logged.
+- The compression component becomes an internal-only backend service the gateway calls over a
+  private network address — never exposed publicly.
+- A real deploy target, TLS, Postgres, and Redis — see [Current Status](/current-status) for
+  the ordered list.

@@ -1,0 +1,115 @@
+---
+title: "Current Status"
+description: "What's proven live, what's disclosed as a real gap"
+---
+
+## Integration status
+
+**Vertical 1 (Local Proxy) — tested live against Claude Code:**
+
+- `packages/hooks-cli` unit tests: **35/35 passing** (`claude-code.test.ts` 11,
+  `tokenops.test.ts` 17, `enforce.test.ts` 7).
+- Real end-to-end proof (2026-08-29, no mocks): started the local compression proxy → a real
+  Claude Code call through it → the proxy's own request log showed a real `claude-sonnet-5`
+  call with `tokens_saved: 1284` (`savings_percent: 2.54`) → `tokenops-audit.ts` turned it into
+  **3 real rows in `agent_action_receipts`**, each independently re-verified by
+  hand-reconstructing the flattened-JWS signing input — all 3 verified `true`. A second run of
+  the audit command logged **0 new rows**, confirming the per-agent-type cursor correctly
+  dedupes.
+- **Codex**: proxy-path routing confirmed live, but the equivalent hooks-cli adapter is **not
+  built yet** — only Claude Code has one today.
+- **Cursor**: not tested this pass at all.
+
+**Vertical 2 (Router):** core admission pipeline, ledger, condensation, DLP, and 8 native + 44
+OpenAI-compatible provider adapters are done and covered by the full test suite. A live
+end-to-end run against the compression proxy specifically is blocked only on a provider API
+key, not on missing code.
+
+## Known limitations
+
+Disclosed plainly, per this project's own "never claim coverage you don't have" rule.
+
+<AccordionGroup>
+  <Accordion title="DLP is not wired into Vertical 1's Claude Code hook path yet">
+    `packages/hooks-cli`'s Claude Code adapter enforces identity/policy and receipts the tool
+    call — it does not currently run the injection/PII classifiers. That's real remaining work,
+    not a design decision. DLP *is* live on Vertical 1's proxy path and all of Vertical 2, since
+    both run the same gateway pipeline.
+  </Accordion>
+  <Accordion title="No Codex or Cursor hooks-cli adapter">
+    Only Claude Code has a `fromClaudeCodeHook` today.
+  </Accordion>
+  <Accordion title="LLMLingua-2 and both standalone DLP-gated proxies are a technical preview">
+    A handful of real calls have been verified end-to-end (compression, DLP refusal, DLP
+    pass-through, all confirmed live). Their shared message-targeting logic is based on
+    directly-observed real message shapes, not exhaustively tested across every possible Claude
+    Code request shape. Both are also entirely separate from the signed-receipt system — a
+    refusal or a compression here is logged to a console, not recorded on any receipt.
+  </Accordion>
+  <Accordion title="The injection classifier has a confirmed false-positive mode">
+    "Reply with exactly the word X and nothing else"-shaped prompts can be falsely blocked. See
+    [DLP](/dlp) for the full finding.
+  </Accordion>
+  <Accordion title="The compression proxy's ML backend reported degraded/ready:false">
+    In every local run this session — plausibly a Windows-specific ONNX Runtime behavior, not
+    independently confirmed. The structural-repetition compressor (for content like JSON) is
+    confirmed working; generic prose compression via the ML backend is not confirmed
+    independently of that fallback.
+  </Accordion>
+  <Accordion title="Ledger writer contention under concurrent load, on this environment specifically">
+    Repeated concurrent `reserve()`/`setLimit` calls against a `@libsql/client`-backed Windows
+    temp-file DB frequently exhaust retries and fail with a generic `contention` error rather
+    than a clean business-reason failure. No data corruption or lost update was found in any
+    trial — a loud failure, not the silent-overspend failure mode the ledger exists to prevent
+    — but it needs a human decision on root cause before higher-concurrency use.
+  </Accordion>
+  <Accordion title="npm run grep:spend is vacuous">
+    Its pattern never matches this codebase's real column names, so it would pass even for an
+    un-guarded raw `UPDATE` on a spend column.
+  </Accordion>
+  <Accordion title="packages/sdk-node is empty, no production deploy target, no caching layer, single-node only">
+    See [Deployment](/deployment) for the plan to close these.
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<Steps>
+  <Step title="DLP into Vertical 1's hook path">
+    Wire `scanForBlockingViolations`/`scanForSensitiveData` into `packages/hooks-cli`'s
+    enforcement path so agent-hook traffic gets the same gating/disclosure guarantees the proxy
+    path and Vertical 2 already have.
+  </Step>
+  <Step title="Codex and Cursor hooks-cli adapters">
+    Following `fromClaudeCodeHook`'s pattern — a request builder per tool's actual hook/log
+    shape, verified live before trusting it.
+  </Step>
+  <Step title="Redis">
+    For two different jobs: **caching** (de-duplicate identical/near-identical prompt scoring
+    and DLP classification results, cache compression-proxy lookups) and **shared state across
+    instances** (the ledger's optimistic-version contention and any rate-limiting need a shared
+    backing store once this runs as more than one process).
+  </Step>
+  <Step title="Postgres migration">
+    SQLite (`@libsql/client`) was a deliberate dev-environment choice (no Docker/Testcontainers
+    available here); production needs Postgres for real concurrent write throughput on the
+    ledger.
+  </Step>
+  <Step title="The hosting/credential-custody work">
+    Described in [Deployment](/deployment) — the per-tenant identity layer,
+    `provider_credentials` storage and encryption, the admin-UI key-handoff screen, and moving
+    the compression component to an internal-only service.
+  </Step>
+  <Step title="A real deploy target">
+    No container/host decision is confirmed yet, and it needs to account for the Python
+    compression-proxy sidecar running alongside the Node gateway.
+  </Step>
+  <Step title="Streaming responses">
+    No provider adapter supports it today; needed for real interactive use beyond one-shot
+    request/response.
+  </Step>
+  <Step title="Rate limiting and virtual-key lifecycle">
+    The admin UI (`packages/web`) currently reads policy/budget state but doesn't manage key
+    creation/revocation beyond what Deployment's virtual-key flow adds.
+  </Step>
+</Steps>

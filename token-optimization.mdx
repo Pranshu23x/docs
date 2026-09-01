@@ -1,0 +1,76 @@
+---
+title: "Token Optimization"
+description: "Three compression paths, composable, all real"
+---
+
+Three independent compression paths. The two production ones are recorded on the receipt as
+one `condensation` object (`applied`, `transformationVersion`, digests of original + result
+text, lengths) — the third is experimental and not yet receipted.
+
+<Steps>
+  <Step title="Local head/tail truncation">
+    `packages/gateway/src/condense/condense.ts` — deterministic, no external process,
+    surrogate-pair-safe boundary slicing. Skipped entirely at `high` assurance (legal/compliance
+    prompts are never condensed, however long) — classification runs on the *original* prompt so
+    condensing first can't strip the very keywords that flag it.
+  </Step>
+  <Step title="Compression proxy">
+    Vertical 1's `AnthropicTokenOpsAdapter` → a local compression proxy → real provider. Real
+    ML-backed prompt compression (a structural-repetition compressor for content like JSON, plus
+    a generic embedding-based compressor for prose). The gateway never trusts its own claim about
+    what changed: after execution it reads the proxy's own request log and **diffs the actual
+    compressed request body against what it sent** — not the transform-name list, which was
+    confirmed live to report header-level changes even when the prompt body was untouched. If it
+    can't confirm a real diff, it declares an honest coverage gap (`condense:compression-proxy`)
+    rather than silently assuming "not applied."
+  </Step>
+  <Step title="LLMLingua-2 semantic pruning (experimental)">
+    `packages/gateway/src/condense/llmlingua.ts` + `scripts/llmlingua-proxy.ts` — **Claude Code
+    only, not yet part of the signed receipt.** A standalone local relay
+    (`npm run tokenops:llmlingua-proxy:claude-code`) that Claude Code points at instead of the
+    compression proxy above. Runs
+    [`@atjsh/llmlingua-2`](https://github.com/atjsh/llmlingua-2-js) (MIT, Microsoft's published
+    LLMLingua-2 research, ported to run natively on `@huggingface/transformers` — the same
+    runtime already used for DLP) to semantically prune the actual human-typed message, then
+    relays to the real Anthropic API using the same real key it received.
+  </Step>
+</Steps>
+
+## What LLMLingua-2 does and doesn't touch
+
+Arrived at from two real bugs found live, not assumed. A first attempt compressed every text
+block in the request and mangled Claude Code's own injected project-context block into
+something the model correctly flagged as injection-shaped. The fix, confirmed against the real
+captured message-array shape: only the **last text block of the last `user`-role message** is
+eligible — that's consistently where the actual typed text lives. The injected-context block
+that precedes it in the same message, all prior-turn history, and the trailing `system`-role
+reminder Claude Code appends after the real turn are left completely untouched. Messages under
+200 characters are left alone too — too short for a semantic-pruning model to do anything but
+add cold-load latency for no gain.
+
+## Real, measured results
+
+<CardGroup cols={2}>
+  <Card title="Prompt condensation" icon="chart-line">
+    2026-08-29, real Gemini API spend, one run: a 19,252-character prompt condensed to 7,999
+    characters — **$0.001050/2253ms direct vs. $0.000505/1364ms through TokenOps — 51.9% cost
+    saved, 832ms latency saved.**
+  </Card>
+  <Card title="LLMLingua-2" icon="scissors">
+    2026-08-31, one real Claude Code call: a 324-character typed message compressed to 179
+    characters (**44.8% reduction**), everything else in the request byte-identical to what was
+    sent without it. One verified data point, not yet benchmarked across many sessions.
+  </Card>
+</CardGroup>
+
+### Multi-session economics (compression proxy path)
+
+A cold proxy's *first* request is genuinely more expensive than direct — compression changes
+the prompt prefix just enough to miss the provider's own cache. But that cost is a **one-time
+tax paid once per proxy process, not per session**: once warm, a brand-new session's first turn
+measured **13.4x cheaper** than the same call going direct. Break-even lands at roughly half of
+one additional session.
+
+See `docs/tokenops-integration.md` in the repository for the full real numbers, including the
+honest counter-case: a single one-shot call with no prior cache to protect measured *more*
+expensive through the proxy in `cache` mode — `--mode token` flips that specific case positive.

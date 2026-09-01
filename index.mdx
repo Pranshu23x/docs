@@ -1,0 +1,69 @@
+---
+title: "Introduction"
+description: "An inline checkpoint for AI traffic that routes, screens, compresses, and proves what it did"
+---
+
+<Note>
+  This is an active internship build, not a finished product. Real code, real tests (612
+  passing at last count), real signed receipts you can independently verify — alongside real,
+  disclosed gaps. See [Current Status](/current-status) before trusting any specific claim in
+  these docs.
+</Note>
+
+TokenOps is an inline checkpoint for AI traffic that **routes**, **screens**, **compresses**,
+and **proves** — every call gets a model decision, a DLP scan, an optional compression pass,
+and a cryptographically signed receipt of exactly what happened and why.
+
+Built for compliance/legal buyers, not finance: the differentiator isn't a spend dashboard,
+it's that an outsider who doesn't trust us can verify our receipts with their own keys, and the
+system honestly declares the calls it wasn't watching instead of quietly assuming they were fine.
+
+## What it can do today
+
+- **Screen every prompt for injection attacks and sensitive data**, using real self-hosted ML
+  classifiers (not regex) — a prompt-injection attempt is blocked *before it reaches the
+  provider*, with a signed receipt proving the refusal, and zero spend.
+- **Compress prompts** to cut token cost, in two ways — a deterministic local truncation, and a
+  real ML-backed compression proxy — while binding the original and compressed text into the
+  receipt so nothing is silently rewritten without a record.
+- **Route each request to the cheapest model that meets the quality bar it needs**,
+  deterministically, across 8 native provider adapters and 44 OpenAI-compatible endpoints
+  (including local runtimes like Ollama and vLLM, no API key needed).
+- **Sign a verifiable receipt for every outcome** — executed, refused (budget or DLP), or
+  failed — checkable by a standalone verifier that shares zero code with the part that
+  produced the receipt. Tamper one field and it flips from `VERIFIED` to `ADVERSE`.
+- **Track spend on a real append-only ledger** with immutable, versioned policy — never a
+  mutable counter that can lose an update mid-request.
+- **Plug into an existing coding agent with zero re-routing** — Claude Code today, tested live,
+  end to end. See [Current Status](/current-status).
+- **Compile receipts into audit-ready evidence** — `satisfied` / `not_evidenced` /
+  `indeterminate` verdicts, plus an auditor export that detects a silently *missing* record,
+  not just a tampered one.
+
+## Two ways to use it
+
+<CardGroup cols={2}>
+  <Card title="Local Proxy" icon="plug">
+    **The main product.** Active for **Claude Code, Codex, and Cursor** — anything shaped like
+    a coding-agent CLI. Keep using your existing agent and subscription exactly as you already
+    do; point it at a local TokenOps layer instead of straight at the provider. Same model, same
+    provider, nothing re-routed — you get compression, DLP screening, and a signed receipt
+    added on top.
+  </Card>
+  <Card title="Router" icon="route">
+    **Bring your own subscription.** Active for **any app or tool with a configurable API base
+    URL** — not agent-specific. Configure your own API keys for several providers, and TokenOps
+    actively picks the cheapest model that clears the quality bar for each request, with the
+    same DLP screening and receipts.
+  </Card>
+</CardGroup>
+
+| | Local Proxy (main product) | Router (bring your own subscription) |
+|---|---|---|
+| **Who it's for** | A developer who already pays for Claude Code / Codex / Cursor and just wants DLP + audit + compression, with zero re-routing | Teams centralizing AI spend and model choice across a company |
+| **How traffic reaches it** | A local compression/DLP proxy your agent's base URL points at, or your agent's own hook system calling into TokenOps directly — no model swap either way | Your app's base URL points at the TokenOps gateway instead of a single provider |
+| **Status** | Compression + DLP done and proven for the proxy path; the separate lightweight Claude Code hook path proves identity/policy/receipts, but DLP isn't wired into that hook path yet | Core routing loop, DLP, and 8 native + 44 OpenAI-compatible provider adapters all done |
+
+See [Architecture](/architecture) for how both verticals share the same underlying admission
+pipeline, and [Cost & Latency Impact](/cost-and-latency) for the real, measured numbers behind
+the compression and DLP claims above.
